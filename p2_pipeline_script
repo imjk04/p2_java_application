@@ -1,0 +1,58 @@
+pipeline {
+    agent { label 'java' }
+    tools { maven 'mymaven'}
+    stages {
+        stage('CODE-CHECKOUT') {
+            steps {
+                git 'https://github.com/imjk04/p2_java_application.git'
+            }
+        }
+        stage('CQA') {
+            steps {
+                withSonarQubeEnv('mysonar') {
+                    sh "mvn clean verify sonar:sonar -Dsonar.projectKey=javaproject"
+                }
+            }
+        }
+        stage('BUILD') {
+            steps {
+                sh 'mvn clean install'
+                sh 'cp -r target Docker-app'
+            }
+        }
+        stage('ARTIFACT') {
+            steps {
+                nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], 
+                    credentialsId: 'nexus-cred', groupId: 'com.visualpathit', nexusUrl: '52.91.65.255:8081', 
+                    nexusVersion: 'nexus3', protocol: 'http', repository: 'nexusrepo', version: 'v2'
+            }
+        }
+        stage('IMAGE_CREATION') {
+            steps {
+                sh 'docker build -t imjk04/pr2:db Docker-db'
+                sh 'docker build -t imjk04/pr2:app Docker-app'
+            }
+        } 
+        stage('IMAGE_SCAN') {
+            steps {
+                sh 'trivy image imjk04/pr2:db'
+                sh 'trivy image imjk04/pr2:app'
+            }
+        }
+        stage('IMAGE_PUSH') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId:'docker-cred') {
+                        sh 'docker push imjk04/pr2:db'
+                        sh 'docker push imjk04/pr2:app'
+                    }
+                }
+            }
+        }
+        stage('DEPLOY') {
+            steps {
+                sh 'docker stack deploy -c compose.yml javaapp'
+            }
+        }
+    }
+}
